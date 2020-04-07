@@ -17,6 +17,9 @@ list(APPEND shared_tests_names "test_bzip2_op")
 list(APPEND shared_tests_flags "-Wl,--wrap=fopen,--wrap=fread,--wrap=fclose,--wrap=fwrite,--wrap=BZ2_bzWriteOpen,--wrap=BZ2_bzWriteClose64,--wrap=BZ2_bzReadClose,--wrap=BZ2_bzReadOpen,--wrap=BZ2_bzRead,--wrap=BZ2_bzWrite,--wrap=_mdebug2")
 endif()
 
+list(APPEND shared_tests_names "test_privsep_op")
+list(APPEND shared_tests_flags "-Wl,--wrap=sysconf,--wrap=getpwnam_r,--wrap=getgrnam_r")
+
 set(SYSCHECK_OP_BASE_FLAGS "-Wl,--wrap,rmdir_ex -Wl,--wrap,wreaddir -Wl,--wrap,_mdebug1 -Wl,--wrap,_mdebug2 \
                             -Wl,--wrap,_mwarn -Wl,--wrap,_merror -Wl,--wrap,getpwuid_r -Wl,--wrap,getgrgid \
                             -Wl,--wrap,wstr_split -Wl,--wrap,OS_ConnectUnixDomain -Wl,--wrap,OS_SendSecureTCP,--wrap=sysconf")
