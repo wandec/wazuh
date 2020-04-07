@@ -18,6 +18,8 @@
 #include "../config/syscheck-config.h"
 #include "../syscheckd/fim_db.h"
 
+extern fim_state_db _db_state;
+
 char *_read_file(const char *high_name, const char *low_name, const char *defines_file) __attribute__((nonnull(3)));
 
 /* auxiliary structs */
@@ -314,6 +316,11 @@ int __wrap_fim_db_get_count_entry_path(fdb_t * fim_sql){
     return mock();
 }
 
+int __wrap_send_log_msg(const char * msg) {
+    check_expected(msg);
+    return 1;
+}
+
 
 #ifdef TEST_WINAGENT
 int __wrap_pthread_mutex_lock (pthread_mutex_t *__mutex) {
@@ -508,6 +515,18 @@ static int teardown_struct_dirent(void **state) {
     return 0;
 }
 
+static int setup_file_limit(void **state) {
+    syscheck.file_limit = 0;
+
+    return 0;
+}
+
+static int teardown_file_limit(void **state) {
+    syscheck.file_limit = 50000;
+
+    return 0;
+}
+
 /* tests */
 static void test_fim_json_event(void **state) {
     fim_data_t *fim_data = *state;
@@ -544,8 +563,10 @@ static void test_fim_json_event(void **state) {
     assert_non_null(timestamp);
     assert_int_equal(timestamp->valueint, 1570184221);
     cJSON *tags = cJSON_GetObjectItem(data, "tags");
+    #ifdef TEST_WINAGENT
+    assert_null(tags);
+    #else
     assert_string_equal(cJSON_GetStringValue(tags), "tag1,tag2");
-    #ifndef TEST_WINAGENT
     cJSON *hard_links = cJSON_GetObjectItem(data, "hard_links");
     assert_null(hard_links);
     #endif
@@ -609,8 +630,10 @@ static void test_fim_json_event_whodata(void **state) {
     assert_non_null(timestamp);
     assert_int_equal(timestamp->valueint, 1570184221);
     cJSON *tags = cJSON_GetObjectItem(data, "tags");
+    #ifdef TEST_WINAGENT
+    assert_null(tags);
+    #else
     assert_string_equal(cJSON_GetStringValue(tags), "tag1,tag2");
-    #ifndef TEST_WINAGENT
     cJSON *hard_links = cJSON_GetObjectItem(data, "hard_links");
     assert_null(hard_links);
     #endif
@@ -661,7 +684,7 @@ static void test_fim_json_event_hardlink_one_path(void **state) {
                     "test.file",
                     fim_data->old_data,
                     fim_data->new_data,
-                    1,
+                    2,
                     FIM_MODIFICATION,
                     FIM_REALTIME,
                     NULL
@@ -682,8 +705,10 @@ static void test_fim_json_event_hardlink_one_path(void **state) {
     assert_non_null(timestamp);
     assert_int_equal(timestamp->valueint, 1570184221);
     cJSON *tags = cJSON_GetObjectItem(data, "tags");
+    #ifdef TEST_WINAGENT
     assert_string_equal(cJSON_GetStringValue(tags), "tag1,tag2");
-    #ifndef TEST_WINAGENT
+    #else
+    assert_null(tags);
     cJSON *hard_links = cJSON_GetObjectItem(data, "hard_links");
     assert_null(hard_links);
     #endif
@@ -723,7 +748,7 @@ static void test_fim_json_event_hardlink_two_paths(void **state) {
                     "test.file",
                     fim_data->old_data,
                     fim_data->new_data,
-                    1,
+                    2,
                     FIM_MODIFICATION,
                     FIM_REALTIME,
                     NULL
@@ -744,8 +769,10 @@ static void test_fim_json_event_hardlink_two_paths(void **state) {
     assert_non_null(timestamp);
     assert_int_equal(timestamp->valueint, 1570184221);
     cJSON *tags = cJSON_GetObjectItem(data, "tags");
+    #ifdef TEST_WINAGENT
     assert_string_equal(cJSON_GetStringValue(tags), "tag1,tag2");
-    #ifndef TEST_WINAGENT
+    #else
+    assert_null(tags);
     cJSON *hard_links = cJSON_GetObjectItem(data, "hard_links");
     assert_non_null(hard_links);
     #endif
@@ -1159,17 +1186,17 @@ static void test_fim_check_depth_success(void **state) {
     int ret;
 
     #ifndef TEST_WINAGENT
-    // Pos 1 = "/usr/bin"
+    // Pos 4 = "/usr/bin"
     char * path = "/usr/bin/folder1/folder2/folder3/file";
     #else
-    // Pos 1 = "%WINDIR%\\SysNative\\drivers\\etc"
-    char *aux_path = "%WINDIR%\\SysNative\\drivers\\etc\\random\\path.exe";
+    // Pos 4 = "%WINDIR%\\SysNative\\wbem"
+    char *aux_path = "%WINDIR%\\SysNative\\wbem\\folder1\\folder2\\folder3\\path.exe";
     char path[OS_MAXSTR];
 
     if(!ExpandEnvironmentStrings(aux_path, path, OS_MAXSTR))
         fail();
     #endif
-    ret = fim_check_depth(path, 1);
+    ret = fim_check_depth(path, 4);
 
     assert_int_equal(ret, 3);
 }
@@ -1179,8 +1206,8 @@ static void test_fim_check_depth_failure_strlen(void **state) {
    int ret;
 
     char * path = "fl/fd";
-    // Pos 1 = "/usr/bin"
-    ret = fim_check_depth(path, 1);
+    // Pos 4 = "/usr/bin"
+    ret = fim_check_depth(path, 4);
 
     assert_int_equal(ret, -1);
 
@@ -1190,7 +1217,7 @@ static void test_fim_check_depth_failure_null_directory(void **state) {
    int ret;
 
     char * path = "/usr/bin";
-    // Pos 1 = "/usr/bin"
+    // Pos 4 = "/usr/bin"
     ret = fim_check_depth(path, 6);
 
     assert_int_equal(ret, -1);
@@ -1233,7 +1260,7 @@ static void test_fim_configuration_directory_file(void **state) {
 
     ret = fim_configuration_directory(path, entry);
 
-    assert_int_equal(ret, 2);
+    assert_int_equal(ret, 3);
 }
 #endif
 
@@ -1817,7 +1844,7 @@ static void test_fim_checker_fim_regular_ignore(void **state) {
     fim_checker(path, fim_data->item, fim_data->w_evt, 1);
 
     assert_int_equal(fim_data->item->configuration, 66047);
-    assert_int_equal(fim_data->item->index, 0);
+    assert_int_equal(fim_data->item->index, 1);
 }
 
 static void test_fim_checker_fim_regular_restrict(void **state) {
@@ -1872,23 +1899,72 @@ static void test_fim_checker_fim_directory(void **state) {
     fim_checker(path, fim_data->item, NULL, 1);
 }
 
-static void test_fim_scan(void **state) {
+static void test_fim_scan_db_full_double_scan(void **state) {
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_STARTED);
+
+    // In fim_checker
+    will_return_count(__wrap_lstat, 0, 7);
+
+    expect_string(__wrap_HasFilesystem, path, "/boot");
+    expect_string(__wrap_HasFilesystem, path, "/etc");
+    expect_string(__wrap_HasFilesystem, path, "/home");
+    expect_string(__wrap_HasFilesystem, path, "/media");
+    expect_string(__wrap_HasFilesystem, path, "/usr/bin");
+    expect_string(__wrap_HasFilesystem, path, "/usr/sbin");
+    will_return_count(__wrap_HasFilesystem, 0, 7);
+
+    expect_string(__wrap_realtime_adddir, dir, "/boot");
+    expect_string(__wrap_realtime_adddir, dir, "/home");
+    expect_string(__wrap_realtime_adddir, dir, "/media");
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
+    expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
+    will_return(__wrap_fim_db_get_not_scanned, NULL);
+    will_return(__wrap_fim_db_get_not_scanned, FIMDB_OK);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 45000);
+
+    expect_string(__wrap_HasFilesystem, path, "/boot");
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6041): Sending DB 100% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":50000,\"alert_type\":\"full\"}");
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_ENDED);
+
+    fim_scan();
+}
+
+static void test_fim_scan_db_full_not_double_scan(void **state) {
     expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_STARTED);
 
     // In fim_checker
     will_return_count(__wrap_lstat, 0, 6);
 
+    expect_string(__wrap_HasFilesystem, path, "/boot");
     expect_string(__wrap_HasFilesystem, path, "/etc");
+    expect_string(__wrap_HasFilesystem, path, "/home");
+    expect_string(__wrap_HasFilesystem, path, "/media");
     expect_string(__wrap_HasFilesystem, path, "/usr/bin");
     expect_string(__wrap_HasFilesystem, path, "/usr/sbin");
-    expect_string(__wrap_HasFilesystem, path, "/media");
-    expect_string(__wrap_HasFilesystem, path, "/home");
-    expect_string(__wrap_HasFilesystem, path, "/boot");
     will_return_count(__wrap_HasFilesystem, 0, 6);
 
-    expect_string(__wrap_realtime_adddir, dir, "/media");
-    expect_string(__wrap_realtime_adddir, dir, "/home");
     expect_string(__wrap_realtime_adddir, dir, "/boot");
+    expect_string(__wrap_realtime_adddir, dir, "/home");
+    expect_string(__wrap_realtime_adddir, dir, "/media");
+
+    will_return_count(__wrap_fim_db_get_count_entry_path, 50000, 3);
 
     expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
     expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
@@ -1902,6 +1978,76 @@ static void test_fim_scan(void **state) {
 
     fim_scan();
 }
+
+static void test_fim_scan_db_free(void **state) {
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_STARTED);
+
+    // In fim_checker
+    will_return_count(__wrap_lstat, 0, 6);
+
+    expect_string(__wrap_HasFilesystem, path, "/boot");
+    expect_string(__wrap_HasFilesystem, path, "/etc");
+    expect_string(__wrap_HasFilesystem, path, "/home");
+    expect_string(__wrap_HasFilesystem, path, "/media");
+    expect_string(__wrap_HasFilesystem, path, "/usr/bin");
+    expect_string(__wrap_HasFilesystem, path, "/usr/sbin");
+    will_return_count(__wrap_HasFilesystem, 0, 6);
+
+    expect_string(__wrap_realtime_adddir, dir, "/boot");
+    expect_string(__wrap_realtime_adddir, dir, "/home");
+    expect_string(__wrap_realtime_adddir, dir, "/media");
+
+    will_return(__wrap_fim_db_get_count_entry_path, 1000);
+
+    expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
+    expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
+    will_return(__wrap_fim_db_get_not_scanned, NULL);
+    will_return(__wrap_fim_db_get_not_scanned, FIMDB_OK);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 1000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":1000,\"alert_type\":\"normal\"}");
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_ENDED);
+
+    fim_scan();
+}
+
+static void test_fim_scan_no_limit(void **state) {
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_STARTED);
+
+    // In fim_checker
+    will_return_count(__wrap_lstat, 0, 6);
+
+    expect_string(__wrap_HasFilesystem, path, "/boot");
+    expect_string(__wrap_HasFilesystem, path, "/etc");
+    expect_string(__wrap_HasFilesystem, path, "/home");
+    expect_string(__wrap_HasFilesystem, path, "/media");
+    expect_string(__wrap_HasFilesystem, path, "/usr/bin");
+    expect_string(__wrap_HasFilesystem, path, "/usr/sbin");
+    will_return_count(__wrap_HasFilesystem, 0, 6);
+
+    expect_string(__wrap_realtime_adddir, dir, "/boot");
+    expect_string(__wrap_realtime_adddir, dir, "/home");
+    expect_string(__wrap_realtime_adddir, dir, "/media");
+
+    expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
+    expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
+    will_return(__wrap_fim_db_get_not_scanned, NULL);
+    will_return(__wrap_fim_db_get_not_scanned, FIMDB_OK);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_ENDED);
+
+    fim_scan();
+}
+
 #else
 static void test_fim_checker_invalid_fim_mode(void **state) {
     fim_data_t *fim_data = *state;
@@ -1956,7 +2102,7 @@ static void test_fim_checker_deleted_file(void **state) {
     char expanded_path[OS_MAXSTR];
     struct stat buf;
     buf.st_mode = S_IFREG;
-    fim_data->item->index = 6;
+    fim_data->item->index = 7;
     fim_data->item->statbuf = buf;
     fim_data->item->mode = FIM_REALTIME;
 
@@ -1973,7 +2119,7 @@ static void test_fim_checker_deleted_file(void **state) {
     errno = 0;
 
     assert_int_equal(fim_data->item->configuration, 37375);
-    assert_int_equal(fim_data->item->index, 6);
+    assert_int_equal(fim_data->item->index, 7);
 }
 
 static void test_fim_checker_deleted_file_enoent(void **state) {
@@ -1983,9 +2129,9 @@ static void test_fim_checker_deleted_file_enoent(void **state) {
     char expanded_path[OS_MAXSTR];
     struct stat buf;
     buf.st_mode = S_IFREG;
-    fim_data->item->index = 6;
+    fim_data->item->index = 7;
     fim_data->item->statbuf = buf;
-    syscheck.opts[6] |= CHECK_SEECHANGES;
+    syscheck.opts[7] |= CHECK_SEECHANGES;
 
     if(!ExpandEnvironmentStrings(path, expanded_path, OS_MAXSTR))
         fail();
@@ -2031,10 +2177,10 @@ static void test_fim_checker_deleted_file_enoent(void **state) {
     fim_checker(expanded_path, fim_data->item, NULL, 1);
 
     errno = 0;
-    syscheck.opts[6] &= ~CHECK_SEECHANGES;
+    syscheck.opts[7] &= ~CHECK_SEECHANGES;
 
     assert_int_equal(fim_data->item->configuration, 45567);
-    assert_int_equal(fim_data->item->index, 6);
+    assert_int_equal(fim_data->item->index, 7);
 }
 
 static void test_fim_checker_fim_regular(void **state) {
@@ -2044,7 +2190,7 @@ static void test_fim_checker_fim_regular(void **state) {
     char expanded_path[OS_MAXSTR];
     struct stat buf;
     buf.st_mode = S_IFREG;
-    fim_data->item->index = 6;
+    fim_data->item->index = 7;
     fim_data->item->statbuf = buf;
     fim_data->item->statbuf.st_size = 1500;
 
@@ -2087,7 +2233,7 @@ static void test_fim_checker_fim_regular(void **state) {
     fim_checker(expanded_path, fim_data->item, fim_data->w_evt, 1);
 
     assert_int_equal(fim_data->item->configuration, 37375);
-    assert_int_equal(fim_data->item->index, 6);
+    assert_int_equal(fim_data->item->index, 7);
 }
 
 static void test_fim_checker_fim_regular_ignore(void **state) {
@@ -2098,7 +2244,7 @@ static void test_fim_checker_fim_regular_ignore(void **state) {
     char debug_msg[OS_MAXSTR];
     struct stat buf;
     buf.st_mode = S_IFREG;
-    fim_data->item->index = 6;
+    fim_data->item->index = 7;
     fim_data->item->statbuf = buf;
     // fim_data->item->mode = FIM_REALTIME;
 
@@ -2118,7 +2264,7 @@ static void test_fim_checker_fim_regular_ignore(void **state) {
     fim_checker(expanded_path, fim_data->item, fim_data->w_evt, 1);
 
     assert_int_equal(fim_data->item->configuration, 37375);
-    assert_int_equal(fim_data->item->index, 6);
+    assert_int_equal(fim_data->item->index, 7);
 }
 
 static void test_fim_checker_fim_regular_restrict(void **state) {
@@ -2129,7 +2275,7 @@ static void test_fim_checker_fim_regular_restrict(void **state) {
     char debug_msg[OS_MAXSTR];
     struct stat buf;
     buf.st_mode = S_IFREG;
-    fim_data->item->index = 7;
+    fim_data->item->index = 8;
     fim_data->item->statbuf = buf;
     fim_data->item->mode = FIM_REALTIME;
 
@@ -2149,7 +2295,7 @@ static void test_fim_checker_fim_regular_restrict(void **state) {
     fim_checker(expanded_path, fim_data->item, fim_data->w_evt, 1);
 
     assert_int_equal(fim_data->item->configuration, 37375);
-    assert_int_equal(fim_data->item->index, 7);
+    assert_int_equal(fim_data->item->index, 8);
 }
 
 static void test_fim_checker_fim_regular_warning(void **state) {
@@ -2159,7 +2305,7 @@ static void test_fim_checker_fim_regular_warning(void **state) {
     char debug_msg[OS_MAXSTR];
     struct stat buf;
     buf.st_mode = S_IFREG;
-    fim_data->item->index = 3;
+    fim_data->item->index = 7;
     fim_data->item->statbuf = buf;
     fim_data->item->statbuf.st_size = 1500;
 
@@ -2201,7 +2347,7 @@ static void test_fim_checker_fim_regular_warning(void **state) {
     fim_checker(expanded_path, fim_data->item, fim_data->w_evt, 1);
 
     assert_int_equal(fim_data->item->configuration, 37375);
-    assert_int_equal(fim_data->item->index, 6);
+    assert_int_equal(fim_data->item->index, 7);
 }
 
 static void test_fim_checker_fim_directory(void **state) {
@@ -2212,7 +2358,7 @@ static void test_fim_checker_fim_directory(void **state) {
     char expanded_path_test[OS_MAXSTR];
     struct stat buf;
     buf.st_mode = S_IFDIR;
-    fim_data->item->index = 6;
+    fim_data->item->index = 7;
     fim_data->item->statbuf = buf;
     fim_data->item->mode = FIM_REALTIME;
 
@@ -2239,9 +2385,10 @@ static void test_fim_checker_fim_directory(void **state) {
     fim_checker(expanded_path, fim_data->item, NULL, 1);
 }
 
-static void test_fim_scan(void **state) {
+static void test_fim_scan_db_full_double_scan(void **state) {
     char expanded_dirs[10][OS_SIZE_1024];
     char directories[10][OS_SIZE_256] = {
+        "%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
         "%WINDIR%",
         "%WINDIR%\\SysNative",
         "%WINDIR%\\SysNative\\drivers\\etc",
@@ -2251,7 +2398,66 @@ static void test_fim_scan(void **state) {
         "%WINDIR%\\System32\\drivers\\etc",
         "%WINDIR%\\System32\\wbem",
         "%WINDIR%\\System32\\WindowsPowerShell\\v1.0",
+    };
+    int i;
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_STARTED);
+
+    // In fim_checker
+    will_return_count(__wrap_stat, 0, 11);
+
+    for(i = 0; i < 10; i++) {
+        if(!ExpandEnvironmentStrings(directories[i], expanded_dirs[i], OS_SIZE_1024))
+            fail();
+
+        str_lowercase(expanded_dirs[i]);
+        expect_string(__wrap_HasFilesystem, path, expanded_dirs[i]);
+    }
+
+    will_return_count(__wrap_HasFilesystem, 0, 11);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
+    expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
+    will_return(__wrap_fim_db_get_not_scanned, NULL);
+    will_return(__wrap_fim_db_get_not_scanned, FIMDB_OK);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 45000);
+
+    expect_string(__wrap_HasFilesystem, path, expanded_dirs[0]);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6041): Sending DB 100% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":50000,\"alert_type\":\"full\"}");
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_ENDED);
+
+    fim_scan();
+}
+
+static void test_fim_scan_db_full_not_double_scan(void **state) {
+    char expanded_dirs[10][OS_SIZE_1024];
+    char directories[10][OS_SIZE_256] = {
         "%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+        "%WINDIR%",
+        "%WINDIR%\\SysNative",
+        "%WINDIR%\\SysNative\\drivers\\etc",
+        "%WINDIR%\\SysNative\\wbem",
+        "%WINDIR%\\SysNative\\WindowsPowerShell\\v1.0",
+        "%WINDIR%\\System32",
+        "%WINDIR%\\System32\\drivers\\etc",
+        "%WINDIR%\\System32\\wbem",
+        "%WINDIR%\\System32\\WindowsPowerShell\\v1.0",
     };
     int i;
 
@@ -2270,19 +2476,471 @@ static void test_fim_scan(void **state) {
 
     will_return_count(__wrap_HasFilesystem, 0, 10);
 
-    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
-    will_return(__wrap_fim_db_set_all_unscanned, 0);
+    will_return_count(__wrap_fim_db_get_count_entry_path, 50000, 3);
 
     expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
     expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
     will_return(__wrap_fim_db_get_not_scanned, NULL);
     will_return(__wrap_fim_db_get_not_scanned, FIMDB_OK);
 
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_ENDED);
+
+    fim_scan();
+}
+
+static void test_fim_scan_db_free(void **state) {
+    char expanded_dirs[10][OS_SIZE_1024];
+    char directories[10][OS_SIZE_256] = {
+        "%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+        "%WINDIR%",
+        "%WINDIR%\\SysNative",
+        "%WINDIR%\\SysNative\\drivers\\etc",
+        "%WINDIR%\\SysNative\\wbem",
+        "%WINDIR%\\SysNative\\WindowsPowerShell\\v1.0",
+        "%WINDIR%\\System32",
+        "%WINDIR%\\System32\\drivers\\etc",
+        "%WINDIR%\\System32\\wbem",
+        "%WINDIR%\\System32\\WindowsPowerShell\\v1.0",
+    };
+    int i;
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_STARTED);
+
+    // In fim_checker
+    will_return_count(__wrap_stat, 0, 10);
+
+    for(i = 0; i < 10; i++) {
+        if(!ExpandEnvironmentStrings(directories[i], expanded_dirs[i], OS_SIZE_1024))
+            fail();
+
+        str_lowercase(expanded_dirs[i]);
+        expect_string(__wrap_HasFilesystem, path, expanded_dirs[i]);
+    }
+
+    will_return_count(__wrap_HasFilesystem, 0, 10);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 1000);
+
+    expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
+    expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
+    will_return(__wrap_fim_db_get_not_scanned, NULL);
+    will_return(__wrap_fim_db_get_not_scanned, FIMDB_OK);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
+    will_return(__wrap_fim_db_get_count_entry_path, 1000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":1000,\"alert_type\":\"normal\"}");
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_ENDED);
+
+    fim_scan();
+}
+
+static void test_fim_scan_no_limit(void **state) {
+    char expanded_dirs[10][OS_SIZE_1024];
+    char directories[10][OS_SIZE_256] = {
+        "%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+        "%WINDIR%",
+        "%WINDIR%\\SysNative",
+        "%WINDIR%\\SysNative\\drivers\\etc",
+        "%WINDIR%\\SysNative\\wbem",
+        "%WINDIR%\\SysNative\\WindowsPowerShell\\v1.0",
+        "%WINDIR%\\System32",
+        "%WINDIR%\\System32\\drivers\\etc",
+        "%WINDIR%\\System32\\wbem",
+        "%WINDIR%\\System32\\WindowsPowerShell\\v1.0",
+    };
+    int i;
+
+    expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_STARTED);
+
+    // In fim_checker
+    will_return_count(__wrap_stat, 0, 10);
+
+    for(i = 0; i < 10; i++) {
+        if(!ExpandEnvironmentStrings(directories[i], expanded_dirs[i], OS_SIZE_1024))
+            fail();
+
+        str_lowercase(expanded_dirs[i]);
+        expect_string(__wrap_HasFilesystem, path, expanded_dirs[i]);
+    }
+
+    will_return_count(__wrap_HasFilesystem, 0, 10);
+
+    expect_value(__wrap_fim_db_get_not_scanned, fim_sql, syscheck.database);
+    expect_value(__wrap_fim_db_get_not_scanned, storage, FIM_DB_DISK);
+    will_return(__wrap_fim_db_get_not_scanned, NULL);
+    will_return(__wrap_fim_db_get_not_scanned, FIMDB_OK);
+
+    expect_value(__wrap_fim_db_set_all_unscanned, fim_sql, syscheck.database);
+    will_return(__wrap_fim_db_set_all_unscanned, 0);
+
     expect_string(__wrap__minfo, formatted_msg, FIM_FREQUENCY_ENDED);
 
     fim_scan();
 }
 #endif
+
+/* fim_check_db_state */
+static void test_fim_check_db_state_normal_to_empty(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 0);
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+}
+
+static void test_fim_check_db_state_empty_to_empty(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 0);
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+}
+
+static void test_fim_check_db_state_empty_to_full(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6041): Sending DB 100% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":50000,\"alert_type\":\"full\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+}
+
+static void test_fim_check_db_state_full_to_empty(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 0);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":0,\"alert_type\":\"normal\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+}
+
+static void test_fim_check_db_state_empty_to_90_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 46000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 90% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":46000,\"alert_type\":\"90_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_90_percentage_to_empty(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 0);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":0,\"alert_type\":\"normal\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+}
+
+static void test_fim_check_db_state_empty_to_80_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 41000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 80% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":41000,\"alert_type\":\"80_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_80_percentage_to_empty(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 0);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":0,\"alert_type\":\"normal\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+}
+
+static void test_fim_check_db_state_empty_to_normal(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 10000);
+
+    assert_int_equal(_db_state, FIM_STATE_DB_EMPTY);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+}
+
+static void test_fim_check_db_state_normal_to_normal(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 20000);
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+}
+
+static void test_fim_check_db_state_normal_to_full(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6041): Sending DB 100% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":50000,\"alert_type\":\"full\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+}
+
+static void test_fim_check_db_state_full_to_normal(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 10000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":10000,\"alert_type\":\"normal\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+}
+
+static void test_fim_check_db_state_normal_to_90_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 46000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 90% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":46000,\"alert_type\":\"90_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_90_percentage_to_normal(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 10000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":10000,\"alert_type\":\"normal\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+}
+
+static void test_fim_check_db_state_normal_to_80_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 41000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 80% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":41000,\"alert_type\":\"80_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_80_percentage_to_80_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 42000);
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_80_percentage_to_full(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6041): Sending DB 100% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":50000,\"alert_type\":\"full\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+}
+
+static void test_fim_check_db_state_full_to_80_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 41000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 80% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":41000,\"alert_type\":\"80_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_80_percentage_to_90_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 46000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 90% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":46000,\"alert_type\":\"90_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_90_percentage_to_90_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 48000);
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_90_percentage_to_full(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 50000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6041): Sending DB 100% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":50000,\"alert_type\":\"full\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+}
+
+static void test_fim_check_db_state_full_to_full(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 60000);
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+}
+
+static void test_fim_check_db_state_full_to_90_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 46000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 90% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":46000,\"alert_type\":\"90_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_FULL);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_90_percentage_to_80_percentage(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 41000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6039): Sending DB 80% full alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":41000,\"alert_type\":\"80_percentage\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_90_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+}
+
+static void test_fim_check_db_state_80_percentage_to_normal(void **state) {
+    (void) state;
+
+    will_return(__wrap_fim_db_get_count_entry_path, 10000);
+
+    expect_string(__wrap__minfo, formatted_msg, "(6038): Sending DB back to normal alert.");
+    expect_string(__wrap_send_log_msg, msg, "wazuh: FIM DB: {\"file_limit\":50000,\"file_count\":10000,\"alert_type\":\"normal\"}");
+
+    assert_int_equal(_db_state, FIM_STATE_DB_80_PERCENTAGE);
+
+    fim_check_db_state();
+
+    assert_int_equal(_db_state, FIM_STATE_DB_NORMAL);
+}
 
 /* fim_directory */
 static void test_fim_directory(void **state) {
@@ -2790,7 +3448,7 @@ static void test_fim_registry_event_valid_add(void **state) {
 
     expect_value(__wrap_fim_db_insert, fim_sql, syscheck.database);
     expect_string(__wrap_fim_db_insert, file_path, "HKEY_LOCAL_MACHINE\\Software\\Classes\\cmdfile");
-    will_return(__wrap_fim_db_insert, 0);
+    will_return(__wrap_fim_db_insert, 1);
 
     ret = fim_registry_event("HKEY_LOCAL_MACHINE\\Software\\Classes\\cmdfile", fim_data->local_data, 0);
 
@@ -2807,7 +3465,7 @@ static void test_fim_registry_event_valid_modification(void **state) {
 
     expect_value(__wrap_fim_db_insert, fim_sql, syscheck.database);
     expect_string(__wrap_fim_db_insert, file_path, "HKEY_LOCAL_MACHINE\\Software\\Classes\\cmdfile");
-    will_return(__wrap_fim_db_insert, 0);
+    will_return(__wrap_fim_db_insert, 1);
 
     ret = fim_registry_event("HKEY_LOCAL_MACHINE\\Software\\Classes\\cmdfile", fim_data->new_data, 0);
 
@@ -2896,7 +3554,37 @@ int main(void) {
         cmocka_unit_test_setup(test_fim_file_error_on_insert, setup_fim_entry),
 
         /* fim_scan */
-        cmocka_unit_test(test_fim_scan),
+        cmocka_unit_test(test_fim_scan_db_full_double_scan),
+        cmocka_unit_test(test_fim_scan_db_full_not_double_scan),
+        cmocka_unit_test(test_fim_scan_db_free),
+        cmocka_unit_test_setup_teardown(test_fim_scan_no_limit, setup_file_limit, teardown_file_limit),
+
+        /* fim_check_db_state */
+        cmocka_unit_test(test_fim_check_db_state_normal_to_empty),
+        cmocka_unit_test(test_fim_check_db_state_empty_to_empty),
+        cmocka_unit_test(test_fim_check_db_state_empty_to_full),
+        cmocka_unit_test(test_fim_check_db_state_full_to_empty),
+        cmocka_unit_test(test_fim_check_db_state_empty_to_90_percentage),
+        cmocka_unit_test(test_fim_check_db_state_90_percentage_to_empty),
+        cmocka_unit_test(test_fim_check_db_state_empty_to_80_percentage),
+        cmocka_unit_test(test_fim_check_db_state_80_percentage_to_empty),
+        cmocka_unit_test(test_fim_check_db_state_empty_to_normal),
+        cmocka_unit_test(test_fim_check_db_state_normal_to_normal),
+        cmocka_unit_test(test_fim_check_db_state_normal_to_full),
+        cmocka_unit_test(test_fim_check_db_state_full_to_normal),
+        cmocka_unit_test(test_fim_check_db_state_normal_to_90_percentage),
+        cmocka_unit_test(test_fim_check_db_state_90_percentage_to_normal),
+        cmocka_unit_test(test_fim_check_db_state_normal_to_80_percentage),
+        cmocka_unit_test(test_fim_check_db_state_80_percentage_to_80_percentage),
+        cmocka_unit_test(test_fim_check_db_state_80_percentage_to_full),
+        cmocka_unit_test(test_fim_check_db_state_full_to_80_percentage),
+        cmocka_unit_test(test_fim_check_db_state_80_percentage_to_90_percentage),
+        cmocka_unit_test(test_fim_check_db_state_90_percentage_to_90_percentage),
+        cmocka_unit_test(test_fim_check_db_state_90_percentage_to_full),
+        cmocka_unit_test(test_fim_check_db_state_full_to_full),
+        cmocka_unit_test(test_fim_check_db_state_full_to_90_percentage),
+        cmocka_unit_test(test_fim_check_db_state_90_percentage_to_80_percentage),
+        cmocka_unit_test(test_fim_check_db_state_80_percentage_to_normal),
 
         /* fim_checker */
         cmocka_unit_test(test_fim_checker_scheduled_configuration_directory_error),
