@@ -20,7 +20,7 @@ from api import alogging, configuration, __path__ as api_path
 # noinspection PyUnresolvedReferences
 from api import validator
 from api.api_exception import APIException
-from api.constants import CONFIG_FILE_PATH
+from api.constants import CONFIG_FILE_PATH, PEM_SSL
 from api.middlewares import set_user_name
 from api.util import to_relative_path
 from wazuh import pyDaemonModule, common
@@ -122,7 +122,8 @@ if __name__ == '__main__':
                 ssl_context.verify_mode = ssl.CERT_REQUIRED
                 ssl_context.load_verify_locations(configuration['https']['ca'])
             ssl_context.load_cert_chain(certfile=configuration['https']['cert'],
-                                        keyfile=configuration['https']['key'])
+                                        keyfile=configuration['https']['key'],
+                                        password=PEM_SSL)
         except ssl.SSLError as e:
             raise APIException(2003, details='Private key does not match with the certificate')
         except IOError as e:
